@@ -113,7 +113,7 @@ sequenceDiagram
             Job->>DB: Update snapshot
             Job->>DB: Log notification
             Job->>Expo: Send push notification
-            Expo-->>App: "Delayed 2h — Falcon 9 / Starlink"
+            Expo-->>App: "Schedule Change · Falcon 9 Block 5 / Starlink / Delayed 2 hours"
         else No change
             Job->>DB: Update snapshot (last_checked)
         end
@@ -122,21 +122,21 @@ sequenceDiagram
 
 Three notification types are sent when a change is detected:
 
-| Type              | Trigger                  | Example message                                    |
-| ----------------- | ------------------------ | -------------------------------------------------- |
-| `status_update`   | Launch status changes    | _"Go for Launch — Falcon 9 / Starlink"_            |
-| `schedule_change` | NET (launch time) shifts | _"Delayed 3h — New Shepard / NS-29"_               |
-| `launch_update`   | Both change at once      | _"Status: TBD · Advanced 1d — Vulcan / Peregrine"_ |
+| Type              | Trigger                  | Title             | Example body                                                                                   |
+| ----------------- | ------------------------ | ----------------- | ---------------------------------------------------------------------------------------------- |
+| `status_update`   | Launch status changes    | `Status update`   | _"Falcon 9 Block 5 \nStarlink Group 6-14 \nGo for Launch"_                                     |
+| `schedule_change` | NET (launch time) shifts | `Schedule Change` | _"Falcon 9 Block 5 \nStarlink Group 6-14 \nDelayed 2 hours"_                                   |
+| `launch_update`   | Both change at once      | `Launch update`   | _"Falcon 9 Block 5 \nStarlink Group 6-14 \nStatus: Go for Launch \nSchedule: Delayed 2 hours"_ |
 
 > 💡 **Design decision: snapshot diffing over webhooks**
 > LL2 doesn't offer webhooks, so change detection is polling-based. Rather than storing just a timestamp of the last check, the API persists a full snapshot of each tracked launch (status ID + name, NET, launch name). This makes the diff unambiguous — a change is detected the moment any field diverges from the stored value, with no risk of missing an update that happened and reverted between polls.
 
-> 💡 **Design decision: bulk DB queries before the loop**
+> <img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> **N+1 issue identified with Claude.**
 > All tracked launch IDs, their snapshots, and their subscribed device tokens are fetched in three queries _before_ the per-launch loop begins. The alternative — querying per launch inside the loop — would produce N+1 database round-trips for every job run. Upfront bulk fetching keeps the job's DB footprint constant regardless of how many launches are tracked.
 
 ---
 
-### 3 · Countdown Notifications
+### 3 · Countdown Notifications & Push Notifications
 
 Separately from change detection, a countdown monitor fires time-based alerts as a launch approaches. Thresholds are checked every 60 seconds.
 
@@ -151,15 +151,15 @@ sequenceDiagram
     loop For each tracked launch
         Job->>Job: Calculate time until launch
         alt Within 24h threshold (not yet sent)
-            Job->>Expo: "NET — 24 hours till launch"
+            Job->>Expo: "NET · Falcon 9 Block 5 / Starlink / 24 hours till launch"
             Expo-->>App: Push notification
             Job->>DB: Mark 24h threshold sent
         else Within 1h threshold (not yet sent)
-            Job->>Expo: "NET — 1 hour till launch"
+            Job->>Expo: "NET · Falcon 9 Block 5 / Starlink / 1 hour till launch"
             Expo-->>App: Push notification
             Job->>DB: Mark 1h threshold sent
         else Within 5m threshold (not yet sent)
-            Job->>Expo: "NET — Under 5 minutes to launch"
+            Job->>Expo: "NET · Falcon 9 Block 5 / Starlink / 5 minutes till launch"
             Expo-->>App: Push notification
             Job->>DB: Mark 5m threshold sent
         end
@@ -198,7 +198,7 @@ graph LR
 ```
 
 > 💡 **Design decision: backfill as a separate fast job**
-> The change detect job can only diff a launch against a snapshot that already exists. When a user tracks a new launch, there's no snapshot yet. Rather than special-casing this inside change detect, a dedicated backfill job runs every 30 seconds to create those first snapshots quickly. This also pre-marks any countdown thresholds that have already elapsed at the moment of tracking — so a user who starts tracking at T-2h won't receive a stale "24 hours to launch" notification.
+> The change detect job can only diff a launch against a snapshot that already exists. When a user tracks a new launch, there's no snapshot yet. Rather than special-casing this inside change detect, a dedicated backfill job runs every 30 seconds to create those first snapshots quickly. Late-subscriber suppression for countdown notifications is handled separately — `getUnsentCountdownTokens` filters by `created_at < subscribedBefore`, so a user who starts tracking at T-2h is simply excluded from the 24h threshold query rather than having it pre-marked.
 
 ---
 
@@ -210,43 +210,19 @@ Tests are written with [Vitest](https://vitest.dev/) and [Supertest](https://git
 
 | Task                   | Interval | What's tested                                                                                                                                                   |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Change Detect**      | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes      |
-| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; elapsed countdown thresholds pre-marked as sent so stale alerts are suppressed at tracking time        |
+| **Change Detect**      | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes     |
+| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; elapsed countdown thresholds pre-marked as sent so stale alerts are suppressed at tracking time       |
 | **Countdown Monitor**  | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
-| **Receipt Check**      | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                             |
+| **Receipt Check**      | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                            |
 | **Housekeeping**       | 1 hr     | Orphaned device tokens removed; old notification log entries archived; job is a no-op when nothing qualifies                                                    |
 
-All five tasks are tested with an `AbortController` wired in so each test can stop the loop cleanly after a single iteration — no timers leak between tests.
-
-### Approach
-
-Database calls are replaced with in-memory stubs using Vitest's `vi.fn()`, and the Expo SDK is mocked at the module level. This keeps the tests fast (no real DB or network calls) while still exercising the full decision logic inside each job.
-
-The change detect job gets the most coverage, including edge cases like:
-
-- both status and NET changing simultaneously (`launch_update` type)
-- a launch reverting to a previously seen state (no spurious re-notification)
-- subscriber list being empty (job completes silently with no Expo calls)
-
-> 💡 **Design decision: task tests over end-to-end tests**
-> Background jobs are hard to drive end-to-end because their effects depend on timing, external APIs, and DB state. Unit-level task tests — with all I/O mocked — give faster feedback and make it straightforward to assert exactly which notifications were sent and which DB writes occurred, without the flakiness of real clock or network dependencies.
+<img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> **Claude was used to generate tests**
 
 ---
 
 ## API Endpoints
 
 ### Public
-
-```
-GET /api/health
-```
-
-```json
-{
-  "status": "ok",
-  "timestamp": "2025-10-01T12:00:00.000Z"
-}
-```
 
 ### Protected (require `API-Key` header)
 
@@ -357,12 +333,7 @@ erDiagram
 
 ## Deployment
 
-The service is deployed on [Railway](https://railway.app) using nixpacks for zero-config builds. Upstash provides serverless Redis with no infrastructure to manage. Errors are captured in Sentry with production-only DSN gating so local development stays clean.
-
-Graceful shutdown is handled via `SIGTERM`/`SIGINT` — background jobs are stopped and the database connection is closed cleanly before the process exits.
-
-> 💡 **Design decision: Upstash (serverless) Redis over a managed instance**
-> Upstash bills per request rather than per hour, making it cost-effective at low traffic volumes. The HTTP-based client also means no persistent TCP connection to manage — important on Railway where the process may be restarted or scaled with no warm-up time. The trade-off is slightly higher per-request latency vs a co-located Redis instance, which is acceptable given the cache TTLs are measured in minutes.
+The service is deployed on [Railway](https://railway.app) using nixpacks for zero-config builds. Upstash provides serverless Redis with no infrastructure to manage. Errors are captured in [Sentry](https://sentry.io/).
 
 ---
 
@@ -374,4 +345,4 @@ Graceful shutdown is handled via `SIGTERM`/`SIGINT` — background jobs are stop
 
 ## Authorship
 
-This documentation was co-authored with Claude (Anthropic).
+<img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> This documentation was co-authored with Claude (Anthropic).
