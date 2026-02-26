@@ -6,7 +6,7 @@
 
 > Backend API service powering the [OrbitQ](https://orbitq.app) rocket launch tracker.
 
-OrbitQ is an iOS app that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This repo is the backend service that powers it.
+OrbitQ is an iOS app that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This README describes the backend service that powers it.
 
 ---
 
@@ -40,7 +40,7 @@ graph TD
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Runtime            | <img src="https://cdn.simpleicons.org/nodedotjs/339933" height="14"> Node.js 20, <img src="https://cdn.simpleicons.org/typescript/3178C6" height="14"> TypeScript 5 |
 | Web framework      | <img src="https://cdn.simpleicons.org/express" height="14"> Express 4                                                                                               |
-| Database           | <img src="https://cdn.simpleicons.org/postgresql/4169E1" height="14"> PostgreSQL (via `pg`)                                                                         |
+| Database           | <img src="https://cdn.simpleicons.org/postgresql/4169E1" height="14"> PostgreSQL (via [`pg`](https://github.com/brianc/node-postgres))                              |
 | Cache              | <img src="https://cdn.simpleicons.org/upstash/00E9A3" height="14"> Upstash Redis (`@upstash/redis`)                                                                 |
 | HTTP client        | 🐶 [`underrated-fetch`](https://github.com/jamus/underrated-fetch) — fetch with built-in Redis caching                                                              |
 | Push notifications | <img src="https://cdn.simpleicons.org/expo" height="14"> Expo Push Notifications SDK (abstracts APNs + FCM)                                                         |
