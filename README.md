@@ -36,17 +36,17 @@ graph TD
 
 ## Tech Stack
 
-| Layer              | Technology                                                                                          |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| Runtime            | Node.js 20, TypeScript 5                                                                            |
-| Web framework      | Express 4                                                                                           |
-| Database           | PostgreSQL (via `pg`)                                                                               |
-| Cache              | Upstash Redis (`@upstash/redis`)                                                                    |
-| HTTP client        | [`underrated-fetch`](https://github.com/jamus/underrated-fetch) — fetch with built-in Redis caching |
-| Push notifications | Expo Push Notifications SDK (abstracts APNs + FCM)                                                  |
-| Error monitoring   | Sentry                                                                                              |
-| Testing            | Vitest + Supertest                                                                                  |
-| Deployment         | Railway (nixpacks)                                                                                  |
+| Layer              | Technology                                                                                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime            | <img src="https://cdn.simpleicons.org/nodedotjs/339933" height="14"> Node.js 20, <img src="https://cdn.simpleicons.org/typescript/3178C6" height="14"> TypeScript 5 |
+| Web framework      | <img src="https://cdn.simpleicons.org/express" height="14"> Express 4                                                                                               |
+| Database           | <img src="https://cdn.simpleicons.org/postgresql/4169E1" height="14"> PostgreSQL (via `pg`)                                                                         |
+| Cache              | <img src="https://cdn.simpleicons.org/upstash/00E9A3" height="14"> Upstash Redis (`@upstash/redis`)                                                                 |
+| HTTP client        | 🐶 [`underrated-fetch`](https://github.com/jamus/underrated-fetch) — fetch with built-in Redis caching                                                              |
+| Push notifications | <img src="https://cdn.simpleicons.org/expo" height="14"> Expo Push Notifications SDK (abstracts APNs + FCM)                                                         |
+| Error monitoring   | <img src="https://cdn.simpleicons.org/sentry/362D59" height="14"> Sentry                                                                                            |
+| Testing            | <img src="https://cdn.simpleicons.org/vitest/6E9F18" height="14"> Vitest + Supertest                                                                                |
+| Deployment         | <img src="https://cdn.simpleicons.org/railway" height="14"> Railway (nixpacks)                                                                                      |
 
 ---
 
@@ -54,7 +54,7 @@ graph TD
 
 ### 1 · API Request Flow
 
-The iOS app requests launch data through the OrbitQ API rather than hitting LL2 directly. Every request checks Redis first — only fetching from LL2 on a cache miss. This keeps the app well within the LL2 rate limit while still serving fresh data.
+The iOS app requests launch data through the OrbitQ API rather than hitting LL2 directly. Every request checks Redis first — only fetching from LL2 on a cache miss.
 
 ```mermaid
 sequenceDiagram
@@ -77,16 +77,8 @@ sequenceDiagram
     end
 ```
 
-Cache TTLs are tuned to the LL2 rate limit tier in use:
-
-| Endpoint             | TTL    | Purpose                                     |
-| -------------------- | ------ | ------------------------------------------- |
-| `/launches/upcoming` | 4 min  | High-frequency; users check this most often |
-| `/launches/:id`      | 10 min | Per-launch detail                           |
-| `/launches/previous` | 15 min | Historical; changes infrequently            |
-
 > 💡 **Design decision: static TTL over dynamic**
-> An earlier iteration explored dynamic TTL — shortening cache expiry to ~60 seconds when a launch was within 30 minutes of its NET. This gave fresher data during countdowns but made rate-limit budgeting unpredictable: a cluster of near-launches could exhaust the hourly LL2 quota quickly. Static TTLs make the request budget deterministic and easy to reason about. The countdown notification system (which runs server-side and doesn't depend on cache freshness) closes the gap for time-critical alerts.
+> An earlier iteration explored dynamic TTL — shortening cache expiry when a launch was within 30 minutes of its NET. This gave fresher data during countdowns but made the code very difficult to reason about. Static TTLs make the request budget deterministic and easy to reason about. Will monitor if we need to shorten the caches (and increase our rate LL2 limit) over time.
 
 ---
 
@@ -169,7 +161,7 @@ sequenceDiagram
 If a launch slips past a threshold (e.g. delayed from T-30min to T+3h), the sent record is cleared so the notification will fire again when the window reopens.
 
 > 💡 **Design decision: store `net_at_send` on countdown records**
-> Each countdown record stores the NET (launch time) that was current when the threshold was marked sent. If the launch subsequently slips, the stored NET no longer matches the snapshot — the old record is deleted and the threshold becomes eligible to fire again. A simple boolean `sent` flag would make reschedule detection impossible without a separate comparison step.
+> Each countdown record stores the NET (launch time) that was current when the threshold was marked sent. If the launch subsequently slips, the stored NET no longer matches the snapshot — the old record is deleted and the threshold becomes eligible to fire again.
 
 ---
 
@@ -178,27 +170,27 @@ If a launch slips past a threshold (e.g. delayed from T-30min to T+3h), the sent
 Five jobs run independently in async loops managed by a central task scheduler. Each job completes before sleeping — no overlapping runs.
 
 > 💡 **Design decision: async loops, not cron**
-> Each job is a `while (!aborted)` loop that sleeps _after_ each run completes. This means a slow run simply delays the next one — the interval is measured from completion, not start. Cron-style scheduling (e.g. `node-cron`) fires at wall-clock times regardless of whether the previous run has finished, which can cause jobs to overlap and stack up under load. The loops are owned by an `AbortController`, so stopping them on `SIGTERM` is a single `.abort()` call with no timers to clear.
+> Each job is a `while (!aborted)` loop that sleeps _after_ each run completes. This means a slow run simply delays the next one — the interval is measured from completion, not start. Cron-style scheduling (e.g. `node-cron`) would fire at "wall-clock" times regardless of whether the previous run has finished. This could cause jobs to overlap up under load.
 
 ```mermaid
 graph LR
-    Scheduler["Task Scheduler\n(AbortController)"]
+    Scheduler["Task Scheduler | (AbortController)"]
 
-    Scheduler --> A["🔄 Change Detect\nevery 4 min"]
-    Scheduler --> B["📸 Backfill Snapshots\nevery 30 sec"]
-    Scheduler --> C["⏳ Countdown Monitor\nevery 60 sec"]
-    Scheduler --> D["📬 Receipt Check\nevery 15 min"]
-    Scheduler --> E["🧹 Housekeeping\nevery 1 hr"]
+    Scheduler --> A["🔄 Change Detect | every 4 min"]
+    Scheduler --> B["📸 Backfill Snapshots | every 30 sec"]
+    Scheduler --> C["⏳ Countdown Monitor | every 60 sec"]
+    Scheduler --> D["📬 Receipt Check | every 15 min"]
+    Scheduler --> E["🧹 Housekeeping | every 1 hr"]
 
-    A -->|"Diffs launch state,\nsends change alerts"| LL2["LL2 API / Cache"]
-    B -->|"Fetches initial snapshot\nfor newly tracked launches"| LL2
-    C -->|"Fires T-24h/1h/5m\ncountdown notifications"| PG["PostgreSQL"]
-    D -->|"Validates Expo\npush receipts"| Expo["Expo API"]
-    E -->|"Cleans orphaned tokens,\narchives old logs"| PG
+    A -->|"Diffs launch state, | sends change alerts"| LL2["LL2 API / Cache"]
+    B -->|"Fetches initial snapshot | for newly tracked launches"| LL2
+    C -->|"Fires T-24h/1h/5m | countdown notifications"| PG["PostgreSQL"]
+    D -->|"Validates Expo | push receipts"| Expo["Expo API"]
+    E -->|"Cleans orphaned tokens, archives old logs"| PG
 ```
 
 > 💡 **Design decision: backfill as a separate fast job**
-> The change detect job can only diff a launch against a snapshot that already exists. When a user tracks a new launch, there's no snapshot yet. Rather than special-casing this inside change detect, a dedicated backfill job runs every 30 seconds to create those first snapshots quickly. Late-subscriber suppression for countdown notifications is handled separately — `getUnsentCountdownTokens` filters by `created_at < subscribedBefore`, so a user who starts tracking at T-2h is simply excluded from the 24h threshold query rather than having it pre-marked.
+> The change detect job can only diff a launch against a snapshot that already exists. When a user tracks a new launch, there's no snapshot yet. Rather than special-casing this inside change detect, a dedicated backfill job runs every 30 seconds to create those first snapshots quickly.
 
 ---
 
@@ -211,18 +203,16 @@ Tests are written with [Vitest](https://vitest.dev/) and [Supertest](https://git
 | Task                   | Interval | What's tested                                                                                                                                                   |
 | ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Change Detect**      | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes     |
-| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; elapsed countdown thresholds pre-marked as sent so stale alerts are suppressed at tracking time       |
+| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; returns false when no launches are missing snapshots                                                  |
 | **Countdown Monitor**  | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
 | **Receipt Check**      | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                            |
-| **Housekeeping**       | 1 hr     | Orphaned device tokens removed; old notification log entries archived; job is a no-op when nothing qualifies                                                    |
+| **Housekeeping**       | 1 hr     | All four cleanup queries always run; returns true when any removed rows, false when all return 0                                                                |
 
 <img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> **Claude was used to generate tests**
 
 ---
 
 ## API Endpoints
-
-### Public
 
 ### Protected (require `API-Key` header)
 
@@ -233,27 +223,7 @@ GET /api/v1/launches/:id
 GET /api/v1/config/launch_statuses
 ```
 
-Responses are proxied from Launch Library 2 and cached. Example for a single launch:
-
-```json
-{
-  "id": "abc123",
-  "name": "Falcon 9 | Starlink Group 10-4",
-  "status": {
-    "id": 1,
-    "name": "Go for Launch"
-  },
-  "net": "2025-10-15T08:30:00Z",
-  "launch_service_provider": {
-    "name": "SpaceX"
-  },
-  "rocket": {
-    "configuration": {
-      "name": "Falcon 9"
-    }
-  }
-}
-```
+Responses are proxied from Launch Library 2 and cached.
 
 ### Tracking (require `API-Key` header)
 
@@ -261,19 +231,6 @@ Responses are proxied from Launch Library 2 and cached. Example for a single lau
 POST   /api/v1/tracking           — Subscribe a device token to a launch
 DELETE /api/v1/tracking/:launchId — Unsubscribe a device from a launch
 GET    /api/v1/tracking           — List launches tracked by a device
-```
-
-Example subscribe request:
-
-```http
-POST /api/v1/tracking
-API-Key: <key>
-Content-Type: application/json
-
-{
-  "deviceToken": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]",
-  "launchId": "abc123"
-}
 ```
 
 ---
@@ -339,7 +296,7 @@ The service is deployed on [Railway](https://railway.app) using nixpacks for zer
 
 ## Related
 
-- [OrbitQ iOS App](#) _(coming soon)_
+- [OrbitQ iOS App](#) _(public readme coming soon)_
 - [underrated-fetch](https://github.com/jamus/underrated-fetch) — the HTTP + cache library used internally
 - [Launch Library 2](https://thespacedevs.com/llapi) — the upstream rocket launch data source
 
