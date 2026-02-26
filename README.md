@@ -1,6 +1,5 @@
 # OrbitQ Service
 
-![CI](https://github.com/jamus/orbitq-app/actions/workflows/ci.yml/badge.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
 ![Node](https://img.shields.io/badge/Node-20.x-green)
 
