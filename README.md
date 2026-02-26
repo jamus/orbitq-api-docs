@@ -1,4 +1,4 @@
-# OrbitQ API
+# OrbitQ Service
 
 ![CI](https://github.com/jamus/orbitq-app/actions/workflows/ci.yml/badge.svg)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
@@ -6,7 +6,7 @@
 
 > Backend API service powering the [OrbitQ](https://orbitq.app) rocket launch tracker.
 
-OrbitQ is an iOS app that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This repo is the backend that makes that possible.
+OrbitQ is an iOS app that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This repo is the backend service that powers it.
 
 ---
 
@@ -36,17 +36,17 @@ graph TD
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Runtime | Node.js 20, TypeScript 5 |
-| Web framework | Express 4 |
-| Database | PostgreSQL (via `pg`) |
-| Cache | Upstash Redis (`@upstash/redis`) |
-| HTTP client | [`underrated-fetch`](https://github.com/jamus/underrated-fetch) — fetch with built-in Redis caching |
-| Push notifications | Expo Push Notifications SDK (abstracts APNs + FCM) |
-| Error monitoring | Sentry |
-| Testing | Vitest + Supertest |
-| Deployment | Railway (nixpacks) |
+| Layer              | Technology                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| Runtime            | Node.js 20, TypeScript 5                                                                            |
+| Web framework      | Express 4                                                                                           |
+| Database           | PostgreSQL (via `pg`)                                                                               |
+| Cache              | Upstash Redis (`@upstash/redis`)                                                                    |
+| HTTP client        | [`underrated-fetch`](https://github.com/jamus/underrated-fetch) — fetch with built-in Redis caching |
+| Push notifications | Expo Push Notifications SDK (abstracts APNs + FCM)                                                  |
+| Error monitoring   | Sentry                                                                                              |
+| Testing            | Vitest + Supertest                                                                                  |
+| Deployment         | Railway (nixpacks)                                                                                  |
 
 ---
 
@@ -79,11 +79,11 @@ sequenceDiagram
 
 Cache TTLs are tuned to the LL2 rate limit tier in use:
 
-| Endpoint | TTL | Purpose |
-|---|---|---|
-| `/launches/upcoming` | 4 min | High-frequency; users check this most often |
-| `/launches/:id` | 10 min | Per-launch detail |
-| `/launches/previous` | 15 min | Historical; changes infrequently |
+| Endpoint             | TTL    | Purpose                                     |
+| -------------------- | ------ | ------------------------------------------- |
+| `/launches/upcoming` | 4 min  | High-frequency; users check this most often |
+| `/launches/:id`      | 10 min | Per-launch detail                           |
+| `/launches/previous` | 15 min | Historical; changes infrequently            |
 
 > 💡 **Design decision: static TTL over dynamic**
 > An earlier iteration explored dynamic TTL — shortening cache expiry to ~60 seconds when a launch was within 30 minutes of its NET. This gave fresher data during countdowns but made rate-limit budgeting unpredictable: a cluster of near-launches could exhaust the hourly LL2 quota quickly. Static TTLs make the request budget deterministic and easy to reason about. The countdown notification system (which runs server-side and doesn't depend on cache freshness) closes the gap for time-critical alerts.
@@ -122,17 +122,17 @@ sequenceDiagram
 
 Three notification types are sent when a change is detected:
 
-| Type | Trigger | Example message |
-|---|---|---|
-| `status_update` | Launch status changes | *"Go for Launch — Falcon 9 / Starlink"* |
-| `schedule_change` | NET (launch time) shifts | *"Delayed 3h — New Shepard / NS-29"* |
-| `launch_update` | Both change at once | *"Status: TBD · Advanced 1d — Vulcan / Peregrine"* |
+| Type              | Trigger                  | Example message                                    |
+| ----------------- | ------------------------ | -------------------------------------------------- |
+| `status_update`   | Launch status changes    | _"Go for Launch — Falcon 9 / Starlink"_            |
+| `schedule_change` | NET (launch time) shifts | _"Delayed 3h — New Shepard / NS-29"_               |
+| `launch_update`   | Both change at once      | _"Status: TBD · Advanced 1d — Vulcan / Peregrine"_ |
 
 > 💡 **Design decision: snapshot diffing over webhooks**
 > LL2 doesn't offer webhooks, so change detection is polling-based. Rather than storing just a timestamp of the last check, the API persists a full snapshot of each tracked launch (status ID + name, NET, launch name). This makes the diff unambiguous — a change is detected the moment any field diverges from the stored value, with no risk of missing an update that happened and reverted between polls.
 
 > 💡 **Design decision: bulk DB queries before the loop**
-> All tracked launch IDs, their snapshots, and their subscribed device tokens are fetched in three queries *before* the per-launch loop begins. The alternative — querying per launch inside the loop — would produce N+1 database round-trips for every job run. Upfront bulk fetching keeps the job's DB footprint constant regardless of how many launches are tracked.
+> All tracked launch IDs, their snapshots, and their subscribed device tokens are fetched in three queries _before_ the per-launch loop begins. The alternative — querying per launch inside the loop — would produce N+1 database round-trips for every job run. Upfront bulk fetching keeps the job's DB footprint constant regardless of how many launches are tracked.
 
 ---
 
@@ -178,7 +178,7 @@ If a launch slips past a threshold (e.g. delayed from T-30min to T+3h), the sent
 Five jobs run independently in async loops managed by a central task scheduler. Each job completes before sleeping — no overlapping runs.
 
 > 💡 **Design decision: async loops, not cron**
-> Each job is a `while (!aborted)` loop that sleeps *after* each run completes. This means a slow run simply delays the next one — the interval is measured from completion, not start. Cron-style scheduling (e.g. `node-cron`) fires at wall-clock times regardless of whether the previous run has finished, which can cause jobs to overlap and stack up under load. The loops are owned by an `AbortController`, so stopping them on `SIGTERM` is a single `.abort()` call with no timers to clear.
+> Each job is a `while (!aborted)` loop that sleeps _after_ each run completes. This means a slow run simply delays the next one — the interval is measured from completion, not start. Cron-style scheduling (e.g. `node-cron`) fires at wall-clock times regardless of whether the previous run has finished, which can cause jobs to overlap and stack up under load. The loops are owned by an `AbortController`, so stopping them on `SIGTERM` is a single `.abort()` call with no timers to clear.
 
 ```mermaid
 graph LR
@@ -337,6 +337,6 @@ Graceful shutdown is handled via `SIGTERM`/`SIGINT` — background jobs are stop
 
 ## Related
 
-- [OrbitQ iOS App](#) *(coming soon)*
+- [OrbitQ iOS App](#) _(coming soon)_
 - [underrated-fetch](https://github.com/jamus/underrated-fetch) — the HTTP + cache library used internally
 - [Launch Library 2](https://thespacedevs.com/llapi) — the upstream rocket launch data source
