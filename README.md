@@ -340,3 +340,7 @@ Graceful shutdown is handled via `SIGTERM`/`SIGINT` — background jobs are stop
 - [OrbitQ iOS App](#) _(coming soon)_
 - [underrated-fetch](https://github.com/jamus/underrated-fetch) — the HTTP + cache library used internally
 - [Launch Library 2](https://thespacedevs.com/llapi) — the upstream rocket launch data source
+
+## Authorship
+
+This documentation was co-authored with Claude (Anthropic).
