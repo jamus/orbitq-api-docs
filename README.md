@@ -202,6 +202,37 @@ graph LR
 
 ---
 
+## Testing
+
+Tests are written with [Vitest](https://vitest.dev/) and [Supertest](https://github.com/ladjs/supertest). The focus is on the five background tasks, which contain the most business-critical logic. HTTP endpoints are covered by integration tests via Supertest; the task layer is tested in isolation with mocked dependencies.
+
+### Task Coverage
+
+| Task                   | Interval | What's tested                                                                                                                                                   |
+| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Change Detect**      | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes      |
+| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; elapsed countdown thresholds pre-marked as sent so stale alerts are suppressed at tracking time        |
+| **Countdown Monitor**  | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
+| **Receipt Check**      | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                             |
+| **Housekeeping**       | 1 hr     | Orphaned device tokens removed; old notification log entries archived; job is a no-op when nothing qualifies                                                    |
+
+All five tasks are tested with an `AbortController` wired in so each test can stop the loop cleanly after a single iteration — no timers leak between tests.
+
+### Approach
+
+Database calls are replaced with in-memory stubs using Vitest's `vi.fn()`, and the Expo SDK is mocked at the module level. This keeps the tests fast (no real DB or network calls) while still exercising the full decision logic inside each job.
+
+The change detect job gets the most coverage, including edge cases like:
+
+- both status and NET changing simultaneously (`launch_update` type)
+- a launch reverting to a previously seen state (no spurious re-notification)
+- subscriber list being empty (job completes silently with no Expo calls)
+
+> 💡 **Design decision: task tests over end-to-end tests**
+> Background jobs are hard to drive end-to-end because their effects depend on timing, external APIs, and DB state. Unit-level task tests — with all I/O mocked — give faster feedback and make it straightforward to assert exactly which notifications were sent and which DB writes occurred, without the flakiness of real clock or network dependencies.
+
+---
+
 ## API Endpoints
 
 ### Public
