@@ -196,8 +196,8 @@ Filters support two fields — `agencies` (launch agency IDs) and `locations` (l
 
 | `matchMode` | Behavior |
 | ----------- | --------- |
-| `"and"` (default) | Launch must satisfy every non-empty filter type — e.g. SpaceX _and_ KSC |
-| `"or"` | Launch must satisfy at least one filter type — e.g. any SpaceX launch _or_ any KSC launch |
+| `"or"` (default) | Launch must satisfy at least one filter type — e.g. any SpaceX launch _or_ any KSC launch |
+| `"and"` | Launch must satisfy every non-empty filter type — e.g. SpaceX _and_ KSC (currently unused by client)|
 
 Within each filter type, matching is always OR (e.g. SpaceX or ULA). Agency and location IDs come from the LL2 API (`launch_service_provider.id` and `pad.location.id`).
 
