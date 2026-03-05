@@ -204,7 +204,7 @@ Within each filter type, matching is always OR (e.g. SpaceX or ULA). Agency and 
 Auto-tracked launches are stored with `source = 'auto'` in `tracked_launches`. Manually tracked launches (`source = 'manual'`) are never removed by the auto-tracking system. All existing notification logic (change detection, countdowns) applies to auto-tracked launches exactly as it does to manual ones.
 
 > 💡 **Design decision: no extra LL2 API calls**
-> The auto-tracking sync job reuses the same cached upcoming-launches fetch as the change detect job — the same URL, same TTL. Adding auto-tracking introduces zero additional calls to the LL2 API.
+> The auto-tracking sync job reuses the same cached upcoming-launches fetch as the change detect job — the same URL, same TTL.
 
 ---
 
