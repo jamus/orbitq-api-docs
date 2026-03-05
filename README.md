@@ -98,10 +98,11 @@ sequenceDiagram
     Job->>DB: Load tracked launch IDs + snapshots
     DB-->>Job: Snapshots
 
-    loop For each tracked launch
+    loop For each tracked launch (in upcoming window)
         Job->>Job: Diff current vs. snapshot
         alt Change detected (status or schedule)
             Job->>DB: Update snapshot
+            Job->>Cache: Invalidate detail cache entry
             Job->>DB: Log notification
             Job->>Expo: Send push notification
             Expo-->>App: "Schedule Change · Falcon 9 Block 5 / Starlink / Delayed 2 hours"
@@ -121,6 +122,12 @@ Three notification types are sent when a change is detected:
 
 > 💡 **Design decision: snapshot diffing over webhooks**
 > LL2 doesn't offer webhooks, so change detection is polling-based. Rather than storing just a timestamp of the last check, the API persists a full snapshot of each tracked launch (status ID + name, NET, launch name). This makes the diff unambiguous — a change is detected the moment any field diverges from the stored value, with no risk of missing an update that happened and reverted between polls.
+
+> 💡 **Design decision: only monitor launches in the upcoming window**
+> The change detect job only diffs tracked launches that appear in the `limit=50` upcoming fetch. Launches outside the window (e.g. a far-future mission like Neutron Maiden Flight) are skipped — no per-launch fallback API call is made. This keeps API usage predictable and avoids burning the hourly rate limit on missions unlikely to have imminent changes. Once a launch enters the top 50 as its date approaches, monitoring resumes automatically using the existing snapshot.
+
+> 💡 **Design decision: proactive cache invalidation on change**
+> When a change is detected, the launch's detail cache entry is immediately invalidated. This ensures users who tap the push notification see the updated status rather than the stale cached response, without waiting for the TTL to expire.
 
 > <img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> **N+1 issue identified with Claude.**
 > All tracked launch IDs, their snapshots, and their subscribed device tokens are fetched in three queries _before_ the per-launch loop begins. The alternative — querying per launch inside the loop — would produce N+1 database round-trips for every job run. Upfront bulk fetching keeps the job's DB footprint constant regardless of how many launches are tracked.
@@ -247,8 +254,8 @@ Tests are written with [Vitest](https://vitest.dev/) and [Supertest](https://git
 
 | Task                    | Interval | What's tested                                                                                                                                                   |
 | ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Change Detect**       | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes     |
-| **Backfill Snapshots**  | 30 sec   | Snapshot created on first run for a newly tracked launch; returns false when no launches are missing snapshots                                                  |
+| **Change Detect**       | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; cache invalidated on change; launches outside the upcoming window skipped without extra API calls; 429 on upcoming fetch aborts the run |
+| **Backfill Snapshots**  | 30 sec   | Snapshot created on first run for a newly tracked launch; ghost launches (not found in LL2) removed from tracking; 429 stops processing; returns false when no launches are missing snapshots |
 | **Countdown Monitor**   | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
 | **Receipt Check**       | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                            |
 | **Housekeeping**        | 1 hr     | All four cleanup queries always run; returns true when any removed rows, false when all return 0                                                                |
