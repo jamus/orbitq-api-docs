@@ -49,9 +49,9 @@ graph TD
 
 ---
 
-## How It Works
+## Features
 
-### 1 · API Request Flow
+### API Request Flow
 
 The iOS app requests launch data through the OrbitQ API rather than hitting LL2 directly. Every request checks Redis first — only fetching from LL2 on a cache miss.
 
@@ -81,9 +81,9 @@ sequenceDiagram
 
 ---
 
-### 2 · Launch Change Detection & Push Notifications
+### Launch tracking, change Detection & Push Notifications
 
-The core feature. A background job runs every 4 minutes, compares the latest LL2 data against stored snapshots, and notifies subscribers when anything changes.
+Users can track launches. A background job runs every 4 minutes, compares the latest LL2 data against stored snapshots, and notifies subscribers when anything changes.
 
 ```mermaid
 sequenceDiagram
@@ -127,7 +127,7 @@ Three notification types are sent when a change is detected:
 
 ---
 
-### 3 · Countdown Notifications & Push Notifications
+### Countdown Notifications & Push Notifications
 
 Separately from change detection, a countdown monitor fires time-based alerts as a launch approaches. Thresholds are checked every 60 seconds.
 
@@ -164,9 +164,53 @@ If a launch slips past a threshold (e.g. delayed from T-30min to T+3h), the sent
 
 ---
 
+### Auto-Tracking launches
+
+Additionally to manual tracking, Users can define filter rules (by agency and/or launch location for now) so that matching upcoming launches are tracked automatically.
+
+```mermaid
+sequenceDiagram
+    participant App as 📱 iOS App
+    participant API as OrbitQ API
+    participant DB as PostgreSQL
+    participant Cache as Redis Cache
+
+    App->>API: PUT /api/v1/auto-tracking (filters)
+    API->>DB: Save filter rules
+    API->>Cache: Fetch upcoming launches (cached)
+    Cache-->>API: Launch list
+    API->>API: Match launches against filters
+    API->>DB: Add matching auto-tracked launches
+    API-->>App: 200 OK (saved filters)
+
+    Note over API,DB: Background job also runs every 30 min
+    loop Auto-tracking sync (30 min)
+        API->>DB: Load all device filters
+        API->>Cache: Fetch upcoming launches (cached)
+        Cache-->>API: Launch list
+        API->>DB: Add new matches / remove stale auto-tracks
+    end
+```
+
+Filters support two fields — `agencies` (launch agency IDs) and `locations` (launch pad location IDs) — combined via a `matchMode`:
+
+| `matchMode` | Behavior |
+| ----------- | --------- |
+| `"and"` (default) | Launch must satisfy every non-empty filter type — e.g. SpaceX _and_ KSC |
+| `"or"` | Launch must satisfy at least one filter type — e.g. any SpaceX launch _or_ any KSC launch |
+
+Within each filter type, matching is always OR (e.g. SpaceX or ULA). Agency and location IDs come from the LL2 API (`launch_service_provider.id` and `pad.location.id`).
+
+Auto-tracked launches are stored with `source = 'auto'` in `tracked_launches`. Manually tracked launches (`source = 'manual'`) are never removed by the auto-tracking system. All existing notification logic (change detection, countdowns) applies to auto-tracked launches exactly as it does to manual ones.
+
+> 💡 **Design decision: no extra LL2 API calls**
+> The auto-tracking sync job reuses the same cached upcoming-launches fetch as the change detect job — the same URL, same TTL. Adding auto-tracking introduces zero additional calls to the LL2 API.
+
+---
+
 ## Background Jobs
 
-Five jobs run independently in async loops managed by a central task scheduler. Each job completes before sleeping — no overlapping runs.
+Six jobs run independently in async loops managed by a central task scheduler. Each job completes before sleeping — no overlapping runs.
 
 > 💡 **Design decision: async loops, not cron**
 > Each job is a `while (!aborted)` loop that sleeps _after_ each run completes. This means a slow run simply delays the next one — the interval is measured from completion, not start. Cron-style scheduling (e.g. `node-cron`) would fire at "wall-clock" times regardless of whether the previous run has finished. This could cause jobs to overlap up under load.
@@ -180,12 +224,14 @@ graph LR
     Scheduler --> C["⏳ Countdown Monitor | every 60 sec"]
     Scheduler --> D["📬 Receipt Check | every 15 min"]
     Scheduler --> E["🧹 Housekeeping | every 1 hr"]
+    Scheduler --> F["🎯 Auto-tracking Sync | every 30 min"]
 
     A -->|"Diffs launch state, | sends change alerts"| LL2["LL2 API / Cache"]
     B -->|"Fetches initial snapshot | for newly tracked launches"| LL2
     C -->|"Fires T-24h/1h/5m | countdown notifications"| PG["PostgreSQL"]
     D -->|"Validates Expo | push receipts"| Expo["Expo API"]
     E -->|"Cleans orphaned tokens, archives old logs"| PG
+    F -->|"Syncs filter rules against | upcoming launches"| LL2
 ```
 
 > 💡 **Design decision: backfill as a separate fast job**
@@ -199,13 +245,14 @@ Tests are written with [Vitest](https://vitest.dev/) and [Supertest](https://git
 
 ### Task Coverage
 
-| Task                   | Interval | What's tested                                                                                                                                                   |
-| ---------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Change Detect**      | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes     |
-| **Backfill Snapshots** | 30 sec   | Snapshot created on first run for a newly tracked launch; returns false when no launches are missing snapshots                                                  |
-| **Countdown Monitor**  | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
-| **Receipt Check**      | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                            |
-| **Housekeeping**       | 1 hr     | All four cleanup queries always run; returns true when any removed rows, false when all return 0                                                                |
+| Task                    | Interval | What's tested                                                                                                                                                   |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Change Detect**       | 4 min    | Diff logic for status and schedule changes; correct notification type selected; snapshot updated after each diff; no notification sent when nothing changes     |
+| **Backfill Snapshots**  | 30 sec   | Snapshot created on first run for a newly tracked launch; returns false when no launches are missing snapshots                                                  |
+| **Countdown Monitor**   | 60 sec   | Each threshold (24h, 1h, 5m) fires exactly once; threshold cleared and re-queued when a launch slips past its window; no duplicate sends within the same window |
+| **Receipt Check**       | 15 min   | Expo error receipts detected and the corresponding device token flagged; successful receipts produce no side effects                                            |
+| **Housekeeping**        | 1 hr     | All four cleanup queries always run; returns true when any removed rows, false when all return 0                                                                |
+| **Auto-tracking Sync**  | 30 min   | Matching launches added and stale auto-tracks removed per device; 50-launch cap respected; manual tracks never removed; no-op when no devices have filters set  |
 
 <img src="claude-logo.png" height="14" width="14" style="vertical-align:middle;"> **Claude was used to generate tests**
 
@@ -232,6 +279,14 @@ DELETE /api/v1/tracking/:launchId — Unsubscribe a device from a launch
 GET    /api/v1/tracking           — List launches tracked by a device
 ```
 
+### Auto-tracking (require `API-Key` header)
+
+```
+GET    /api/v1/auto-tracking      — Get the device's current filter rules (null if none)
+PUT    /api/v1/auto-tracking      — Save filter rules and trigger an immediate sync
+DELETE /api/v1/auto-tracking      — Remove filter rules and all auto-tracked launches
+```
+
 ---
 
 ## Database Schema
@@ -242,7 +297,15 @@ erDiagram
         serial id PK
         varchar device_token
         varchar launch_id
+        varchar source
         timestamptz created_at
+    }
+
+    device_auto_tracking_filters {
+        serial id PK
+        varchar device_token
+        jsonb filters
+        timestamptz updated_at
     }
 
     launch_snapshots {
@@ -283,6 +346,7 @@ erDiagram
     tracked_launches }o--|| launch_snapshots : "launch_id"
     tracked_launches ||--o{ notification_log : "device_token + launch_id"
     tracked_launches ||--o{ countdown_notifications : "device_token + launch_id"
+    device_auto_tracking_filters ||--o{ tracked_launches : "device_token"
 ```
 
 ---
