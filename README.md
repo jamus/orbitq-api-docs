@@ -5,7 +5,7 @@
 
 > Backend API service powering the [OrbitQ](https://orbitq.app) rocket launch tracker.
 
-OrbitQ is an iOS app that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This README describes the backend service that powers it.
+[OrbitQ is an mobile app](https://github.com/jamus/orbitq-app-docs) that lets users track upcoming rocket launches and receive push notifications when a launch's status or schedule changes — including real-time countdown alerts at 24 hours, 1 hour, and 5 minutes to launch. This README describes the backend service that powers it.
 
 ---
 
